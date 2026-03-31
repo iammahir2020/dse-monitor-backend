@@ -3,6 +3,21 @@ const axios = require('axios');
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
+function formatBangladeshTime(value) {
+    const date = value ? new Date(value) : new Date();
+
+    return new Intl.DateTimeFormat('en-BD', {
+        timeZone: 'Asia/Dhaka',
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+    }).format(date);
+}
+
 async function callTelegramApi(method, payload = {}) {
     if (!TELEGRAM_BOT_TOKEN) {
         return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' };
@@ -33,7 +48,7 @@ function formatNotificationMessage(notification) {
 
 ${symbolLine}${notification.message}
 
-🕐 Time: ${new Date(notification.createdAt || Date.now()).toLocaleString()}
+🕐 Time (BDT): ${formatBangladeshTime(notification.createdAt)}
     `.trim();
 }
 
