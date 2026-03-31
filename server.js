@@ -30,7 +30,9 @@ const { getLiveData, getCacheInfo } = require('./services/liveDataCache');
 const {
     markAllNotificationsRead,
     markNotificationRead,
-    serializeNotification
+    serializeNotification,
+    deleteNotification,
+    deleteAllNotifications
 } = require('./services/notificationService');
 const { sendTelegramText } = require('./services/telegramService');
 const { disconnectUserSockets, initializeWebSocketServer } = require('./services/websocketService');
@@ -40,9 +42,24 @@ const server = http.createServer(app);
 
 const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES || 5);
 const TELEGRAM_LINK_EXPIRY_MINUTES = Number(process.env.TELEGRAM_LINK_EXPIRY_MINUTES || 15);
-const allowedOrigins = (process.env.FRONTEND_URL || process.env.FRONTEND_WEB_URL || '')
-    .split(',')
-    .map((origin) => origin.trim())
+
+function normalizeOrigin(origin) {
+    if (!origin) {
+        return null;
+    }
+
+    const value = String(origin).trim();
+    if (!value) {
+        return null;
+    }
+
+    return value.replace(/\/+$/, '');
+}
+
+const allowedOrigins = [process.env.FRONTEND_URL, process.env.FRONTEND_WEB_URL]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(','))
+    .map((origin) => normalizeOrigin(origin))
     .filter(Boolean);
 
 const corsOptions = {
@@ -51,7 +68,8 @@ const corsOptions = {
             return callback(null, true);
         }
 
-        if (allowedOrigins.includes(origin)) {
+        const normalizedOrigin = normalizeOrigin(origin);
+        if (allowedOrigins.includes(normalizedOrigin)) {
             return callback(null, true);
         }
 
@@ -524,6 +542,33 @@ app.patch('/api/notifications/:id/read', requireAuth, async (req, res) => {
     } catch (error) {
         console.error(`[${req.requestId}] ❌ Error marking notification as read:`, error.message);
         res.status(500).json({ error: 'Failed to update notification' });
+    }
+});
+
+app.delete('/api/notifications/:id', requireAuth, async (req, res) => {
+    try {
+        const deleted = await deleteNotification(req.params.id, req.user.phoneNumber);
+        if (!deleted) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+
+        res.json({ message: 'Notification deleted' });
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error deleting notification:`, error.message);
+        res.status(500).json({ error: 'Failed to delete notification' });
+    }
+});
+
+app.delete('/api/notifications', requireAuth, async (req, res) => {
+    try {
+        const deletedCount = await deleteAllNotifications(req.user.phoneNumber);
+        res.json({
+            message: 'All notifications deleted',
+            deletedCount
+        });
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error deleting all notifications:`, error.message);
+        res.status(500).json({ error: 'Failed to delete notifications' });
     }
 });
 

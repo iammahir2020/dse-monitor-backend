@@ -226,6 +226,8 @@ curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
 - `GET /api/notifications/unread-count`
 - `PATCH /api/notifications/:id/read`
 - `PATCH /api/notifications/read-all`
+- `DELETE /api/notifications/:id`
+- `DELETE /api/notifications`
 
 ### Alerts
 

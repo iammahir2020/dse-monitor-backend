@@ -250,6 +250,19 @@ Response:
 
 `PATCH /api/notifications/read-all`
 
+### Delete one notification
+
+`DELETE /api/notifications/:id`
+
+- Returns 404 if notification does not belong to the user
+- Returns `{ message: "Notification deleted" }`
+
+### Delete all notifications
+
+`DELETE /api/notifications`
+
+- Returns `{ message: "All notifications deleted", deletedCount: <number> }`
+
 ### Notification types currently used
 
 - `alert_triggered`

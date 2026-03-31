@@ -107,9 +107,28 @@ async function markAllNotificationsRead(userPhoneNumber) {
     );
 }
 
+async function deleteNotification(notificationId, userPhoneNumber) {
+    const result = await Notification.deleteOne({
+        _id: notificationId,
+        userPhoneNumber
+    });
+
+    return result.deletedCount > 0;
+}
+
+async function deleteAllNotifications(userPhoneNumber) {
+    const result = await Notification.deleteMany({
+        userPhoneNumber
+    });
+
+    return result.deletedCount;
+}
+
 module.exports = {
     createNotification,
     serializeNotification,
     markNotificationRead,
-    markAllNotificationsRead
+    markAllNotificationsRead,
+    deleteNotification,
+    deleteAllNotifications
 };

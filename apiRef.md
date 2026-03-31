@@ -339,6 +339,35 @@ Mark one notification as read.
 - Errors:
   - `404` if notification does not belong to the user or does not exist
 
+### `DELETE /api/notifications/:id`
+
+Delete a single notification.
+
+- Auth: bearer token required
+- Errors:
+  - `404` if notification does not belong to the user or does not exist
+- Response:
+
+```json
+{
+  "message": "Notification deleted"
+}
+```
+
+### `DELETE /api/notifications`
+
+Delete all notifications for the current user.
+
+- Auth: bearer token required
+- Response:
+
+```json
+{
+  "message": "All notifications deleted",
+  "deletedCount": 5
+}
+```
+
 ## Alerts
 
 All alert routes are user-scoped and authenticated.
