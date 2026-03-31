@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "postinstall": "node scripts/install-python-deps.js",
     "check:node": "node -e \"const major = Number(process.versions.node.split('.')[0]); if (major < 20) { console.error('Node >=20 is required'); process.exit(1); }\"",
     "prebuild": "npm run check:node",
     "build": "find . -name '*.js' -not -path './node_modules/*' -not -path './logs/*' -print0 | xargs -0 -n1 node --check",

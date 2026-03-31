@@ -35,6 +35,8 @@ Recommended Python packages:
 pip install numpy bdshare
 ```
 
+For deployed environments, `npm install` now also installs scraper dependencies from `scraper/requirements.txt`.
+
 ## Node Version
 
 This repo is pinned to Node 20 via `.nvmrc` and `package.json` engines.
