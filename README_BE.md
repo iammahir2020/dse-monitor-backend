@@ -66,6 +66,7 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_BOT_USERNAME=
 TELEGRAM_WEBHOOK_SECRET=
 TELEGRAM_LINK_EXPIRY_MINUTES=15
+BACKEND_PUBLIC_URL=
 ```
 
 Notes:
@@ -73,6 +74,7 @@ Notes:
 - `SMS_PROVIDER=console` means OTPs are logged to the backend console in development.
 - Set `EXPOSE_OTP_IN_RESPONSE=true` if you want OTP returned in API response even in production.
 - `FRONTEND_URL` supports comma-separated origins.
+- Set `BACKEND_PUBLIC_URL` in deployed environments so the backend can auto-register the Telegram webhook.
 - Telegram variables are required if you want Telegram linking and delivery.
 
 ## Install Dependencies
@@ -183,6 +185,8 @@ Authorization: Bearer <jwt>
 4. Set `TELEGRAM_WEBHOOK_SECRET`.
 5. Expose your backend publicly.
 6. Register the webhook to Telegram.
+
+If `BACKEND_PUBLIC_URL` is configured, the backend will also try to register the Telegram webhook automatically on startup.
 
 ### Development option with ngrok
 

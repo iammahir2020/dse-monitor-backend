@@ -34,7 +34,12 @@ const {
     deleteNotification,
     deleteAllNotifications
 } = require('./services/notificationService');
-const { sendTelegramText } = require('./services/telegramService');
+const {
+    getTelegramBotProfile,
+    getTelegramWebhookInfo,
+    registerTelegramWebhook,
+    sendTelegramText
+} = require('./services/telegramService');
 const { disconnectUserSockets, initializeWebSocketServer } = require('./services/websocketService');
 
 const app = express();
@@ -43,6 +48,7 @@ const server = http.createServer(app);
 const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES || 5);
 const TELEGRAM_LINK_EXPIRY_MINUTES = Number(process.env.TELEGRAM_LINK_EXPIRY_MINUTES || 15);
 const EXPOSE_OTP_IN_RESPONSE = String(process.env.EXPOSE_OTP_IN_RESPONSE || '').toLowerCase() === 'true';
+const BACKEND_PUBLIC_URL = String(process.env.BACKEND_PUBLIC_URL || '').trim().replace(/\/+$/, '');
 
 function normalizeOrigin(origin) {
     if (!origin) {
@@ -124,6 +130,54 @@ function resolveTelegramBotUsername() {
     // Allow users to store @botusername in env but always emit canonical deep-link username.
     const normalized = configured.startsWith('@') ? configured.slice(1) : configured;
     return /^[A-Za-z0-9_]{5,}$/.test(normalized) ? normalized : null;
+}
+
+function resolveTelegramWebhookUrl() {
+    if (!BACKEND_PUBLIC_URL) {
+        return null;
+    }
+
+    return `${BACKEND_PUBLIC_URL}/api/telegram/webhook`;
+}
+
+async function ensureTelegramWebhook() {
+    const webhookUrl = resolveTelegramWebhookUrl();
+    const secretToken = String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim();
+
+    if (!webhookUrl || !secretToken) {
+        return;
+    }
+
+    const currentWebhook = await getTelegramWebhookInfo();
+    if (currentWebhook.ok && currentWebhook.data?.url === webhookUrl) {
+        console.log(
+            JSON.stringify({
+                event: 'telegram.webhook.ok',
+                webhookUrl,
+                pendingUpdateCount: currentWebhook.data.pending_update_count || 0
+            })
+        );
+        return;
+    }
+
+    const registration = await registerTelegramWebhook({ webhookUrl, secretToken });
+    if (!registration.ok) {
+        console.warn(
+            JSON.stringify({
+                event: 'telegram.webhook.register_failed',
+                webhookUrl,
+                error: registration.error
+            })
+        );
+        return;
+    }
+
+    console.log(
+        JSON.stringify({
+            event: 'telegram.webhook.registered',
+            webhookUrl
+        })
+    );
 }
 
 function extractStartToken(messageText) {
@@ -821,12 +875,64 @@ app.get('/api/telegram/status', requireAuth, async (req, res) => {
         })
     );
 
+    const [botProfile, webhookInfo] = await Promise.all([
+        getTelegramBotProfile(),
+        getTelegramWebhookInfo()
+    ]);
+
     res.json({
         linked: Boolean(req.user.telegramChatId),
         telegramUsername: req.user.telegramUsername || null,
         linkedAt: req.user.telegramLinkedAt || null,
-        botUsername: process.env.TELEGRAM_BOT_USERNAME || null
+        botUsername: process.env.TELEGRAM_BOT_USERNAME || null,
+        botConfigured: botProfile.ok,
+        botProfile: botProfile.ok ? {
+            id: botProfile.data.id,
+            username: botProfile.data.username,
+            canJoinGroups: botProfile.data.can_join_groups,
+            supportsInlineQueries: botProfile.data.supports_inline_queries
+        } : null,
+        botError: botProfile.ok ? null : botProfile.error,
+        webhook: webhookInfo.ok ? {
+            url: webhookInfo.data.url || null,
+            pendingUpdateCount: webhookInfo.data.pending_update_count || 0,
+            lastErrorDate: webhookInfo.data.last_error_date || null,
+            lastErrorMessage: webhookInfo.data.last_error_message || null,
+            maxConnections: webhookInfo.data.max_connections || null
+        } : null,
+        webhookError: webhookInfo.ok ? null : webhookInfo.error
     });
+});
+
+app.post('/api/telegram/webhook/register', requireAuth, async (req, res) => {
+    try {
+        const webhookUrl = resolveTelegramWebhookUrl();
+        const secretToken = String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim();
+
+        if (!webhookUrl) {
+            return res.status(503).json({ error: 'BACKEND_PUBLIC_URL is not configured' });
+        }
+
+        if (!secretToken) {
+            return res.status(503).json({ error: 'TELEGRAM_WEBHOOK_SECRET is not configured' });
+        }
+
+        const registration = await registerTelegramWebhook({ webhookUrl, secretToken });
+        if (!registration.ok) {
+            return res.status(502).json({ error: registration.error || 'Failed to register Telegram webhook' });
+        }
+
+        const webhookInfo = await getTelegramWebhookInfo();
+
+        res.json({
+            message: 'Telegram webhook registered successfully',
+            webhookUrl,
+            webhook: webhookInfo.ok ? webhookInfo.data : null
+        });
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error registering Telegram webhook:`, error.message);
+        res.status(500).json({ error: 'Failed to register Telegram webhook' });
+    }
 });
 
 app.post('/api/telegram/link-token', requireAuth, async (req, res) => {
@@ -1086,4 +1192,7 @@ process.on('SIGINT', () => {
 initializeWebSocketServer(server);
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Engine API active on port ${PORT}`));
+server.listen(PORT, async () => {
+    console.log(`Engine API active on port ${PORT}`);
+    await ensureTelegramWebhook();
+});
