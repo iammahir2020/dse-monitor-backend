@@ -59,6 +59,7 @@ JWT_SECRET=
 JWT_EXPIRES_IN=7d
 OTP_EXPIRY_MINUTES=5
 SMS_PROVIDER=console
+EXPOSE_OTP_IN_RESPONSE=false
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_BOT_USERNAME=
 TELEGRAM_WEBHOOK_SECRET=
@@ -68,6 +69,7 @@ TELEGRAM_LINK_EXPIRY_MINUTES=15
 Notes:
 
 - `SMS_PROVIDER=console` means OTPs are logged to the backend console in development.
+- Set `EXPOSE_OTP_IN_RESPONSE=true` if you want OTP returned in API response even in production.
 - `FRONTEND_URL` supports comma-separated origins.
 - Telegram variables are required if you want Telegram linking and delivery.
 

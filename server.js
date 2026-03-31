@@ -42,6 +42,7 @@ const server = http.createServer(app);
 
 const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES || 5);
 const TELEGRAM_LINK_EXPIRY_MINUTES = Number(process.env.TELEGRAM_LINK_EXPIRY_MINUTES || 15);
+const EXPOSE_OTP_IN_RESPONSE = String(process.env.EXPOSE_OTP_IN_RESPONSE || '').toLowerCase() === 'true';
 
 function normalizeOrigin(origin) {
     if (!origin) {
@@ -209,7 +210,7 @@ function getOtpResponsePayload(phoneNumber, otpCode) {
         expiresInSeconds: OTP_EXPIRY_MINUTES * 60
     };
 
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== 'production' || EXPOSE_OTP_IN_RESPONSE) {
         payload.devOtp = otpCode;
     }
 
