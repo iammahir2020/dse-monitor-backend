@@ -63,6 +63,28 @@ const PHASE12_ENABLE_SIGNAL_API = String(process.env.PHASE12_ENABLE_SIGNAL_API |
 const PHASE12_ENABLE_DEPTH_API = String(process.env.PHASE12_ENABLE_DEPTH_API || '').toLowerCase() === 'true';
 const PHASE12_CONTROL_SINGLETON_KEY = 'primary';
 
+function resolveTrustProxySetting() {
+    const rawValue = String(process.env.TRUST_PROXY || '').trim().toLowerCase();
+    if (!rawValue) {
+        return process.env.NODE_ENV === 'production' ? 1 : false;
+    }
+
+    if (['true', '1', 'yes'].includes(rawValue)) {
+        return 1;
+    }
+
+    if (['false', '0', 'no'].includes(rawValue)) {
+        return false;
+    }
+
+    const numericValue = Number(rawValue);
+    if (Number.isInteger(numericValue) && numericValue >= 0) {
+        return numericValue;
+    }
+
+    return rawValue;
+}
+
 function normalizeOrigin(origin) {
     if (!origin) {
         return null;
@@ -328,6 +350,7 @@ function serializePhase12Control(control) {
 }
 
 app.use(helmet());
+app.set('trust proxy', resolveTrustProxySetting());
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '100kb' }));
 app.use('/api', apiLimiter);
