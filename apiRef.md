@@ -263,6 +263,38 @@ Enable or disable the 2-minute depth worker.
   - disabling stops the in-process interval immediately
   - the value is persisted and reused on next boot
   - enabling returns `409` if `PHASE12_ENABLE_DEPTH_MONITOR=false` in server env
+
+### `GET /api/phase12/alert-monitor`
+
+Read the current server-side state of the legacy 2-minute alert monitor.
+
+- Auth: bearer token required
+- Response: includes `alertMonitor` status fields
+  - `configuredEnabled`
+  - `runtimeEnabled`
+  - `effectiveEnabled`
+  - `intervalActive`
+  - `isMonitoring`
+  - `persistedEnabled`
+
+### `PATCH /api/phase12/alert-monitor`
+
+Enable or disable the legacy 2-minute alert monitor.
+
+- Auth: bearer token required
+- Body:
+
+```json
+{
+  "enabled": false
+}
+```
+
+- Response: same shape as `GET /api/phase12/alert-monitor`
+- Notes:
+  - disabling stops the in-process interval immediately
+  - the value is persisted and reused on next boot
+  - enabling returns `409` if `ALERT_MONITOR_ENABLED=false` in server env
     "id": "...",
     "phoneNumber": "+8801XXXXXXXXX",
     "notificationSettings": {}

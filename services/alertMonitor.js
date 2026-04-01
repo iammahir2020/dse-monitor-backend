@@ -7,8 +7,11 @@ const { getLiveData } = require('./liveDataCache');
 const { recordDailySummaries, getSummaryDate, getSummaryHistoryForSymbols } = require('./dailySummaryService');
 const { average, getCurrentValueForAlert, getStockVolume, isAlertTriggered } = require('./marketAnalytics');
 
+const ALERT_MONITOR_ENABLED = String(process.env.ALERT_MONITOR_ENABLED || 'true').toLowerCase() === 'true';
+
 let monitorInterval = null;
 let isMonitoring = false;
+let runtimeEnabled = ALERT_MONITOR_ENABLED;
 
 function buildStockMap(liveData) {
     const stockMap = {};
@@ -268,20 +271,47 @@ async function monitorAlerts() {
     }
 }
 
-// Start the monitoring system
-function startAlertMonitor() {
+function getAlertMonitorStatus() {
+    return {
+        configuredEnabled: ALERT_MONITOR_ENABLED,
+        runtimeEnabled,
+        effectiveEnabled: ALERT_MONITOR_ENABLED && runtimeEnabled,
+        intervalActive: Boolean(monitorInterval),
+        isMonitoring
+    };
+}
+
+function syncAlertMonitorInterval() {
+    const shouldRun = ALERT_MONITOR_ENABLED && runtimeEnabled;
+
+    if (!shouldRun) {
+        if (monitorInterval) {
+            clearInterval(monitorInterval);
+            monitorInterval = null;
+            console.log('🔴 Alert Monitor stopped');
+        }
+
+        return getAlertMonitorStatus();
+    }
+
     if (monitorInterval) {
-        console.log('⚠️  Alert monitor already running');
-        return;
+        return getAlertMonitorStatus();
     }
 
     console.log('🟢 Starting Alert Monitor (checks every 2 minutes)');
-    
-    // Run first check immediately
     monitorAlerts();
-    
-    // Then run every 2 minutes (120000 ms)
     monitorInterval = setInterval(monitorAlerts, 2 * 60 * 1000);
+
+    return getAlertMonitorStatus();
+}
+
+// Start the monitoring system
+function startAlertMonitor(options = {}) {
+    if (typeof options.enabled === 'boolean') {
+        runtimeEnabled = options.enabled;
+    }
+
+    return syncAlertMonitorInterval();
 }
 
 // Stop the monitoring system
@@ -293,8 +323,15 @@ function stopAlertMonitor() {
     }
 }
 
+function setAlertMonitorEnabled(enabled) {
+    runtimeEnabled = Boolean(enabled);
+    return syncAlertMonitorInterval();
+}
+
 module.exports = {
+    getAlertMonitorStatus,
     startAlertMonitor,
+    setAlertMonitorEnabled,
     stopAlertMonitor,
     monitorAlerts
 };

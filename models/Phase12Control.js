@@ -11,6 +11,10 @@ const phase12ControlSchema = new mongoose.Schema(
         depthMonitorEnabled: {
             type: Boolean,
             default: true
+        },
+        alertMonitorEnabled: {
+            type: Boolean,
+            default: true
         }
     },
     {

@@ -200,6 +200,36 @@ Frontend implementation note:
 - bind the switch to `depthMonitor.runtimeEnabled`
 - optimistic UI is safe, but reconcile with the response payload because `configuredEnabled` can block re-enable
 
+### `GET /api/phase12/alert-monitor`
+
+Returns runtime state for the legacy alert monitor worker (manual alerts + smart volume alerts).
+
+Response includes:
+
+- `alertMonitor.configuredEnabled`
+- `alertMonitor.runtimeEnabled`
+- `alertMonitor.effectiveEnabled`
+- `alertMonitor.intervalActive`
+- `alertMonitor.isMonitoring`
+- `alertMonitor.persistedEnabled`
+
+### `PATCH /api/phase12/alert-monitor`
+
+Request body:
+
+```json
+{
+  "enabled": false
+}
+```
+
+Behavior:
+
+- `enabled: false` stops the legacy 2-minute alert monitor interval immediately
+- `enabled: true` restarts it if backend config allows it
+- state is persisted and reused after restart
+- enabling returns `409` if alert monitor is disabled by server config
+
 ## WebSocket Contract
 
 ### Connect
@@ -637,9 +667,11 @@ Notes:
 - enable or disable Telegram notifications
 - enable or disable portfolio or watchlist volume alerts
 - enable or disable the phase12 2-minute depth monitor using `GET /api/phase12/depth-monitor` and `PATCH /api/phase12/depth-monitor`
+- enable or disable the legacy 2-minute alert monitor using `GET /api/phase12/alert-monitor` and `PATCH /api/phase12/alert-monitor`
 - set fixed volume threshold
 - set relative volume multiplier and lookback days
 - show current depth worker status using `depthMonitor.runtimeEnabled`, `depthMonitor.intervalActive`, and `depthMonitor.configuredEnabled`
+- show current legacy alert worker status using `alertMonitor.runtimeEnabled`, `alertMonitor.intervalActive`, and `alertMonitor.configuredEnabled`
 
 ## Suggested Frontend State Shape
 
@@ -693,5 +725,7 @@ Frontend should treat this backend as an authenticated, user-scoped API. The big
 - add signal pulse UI backed by `GET /api/insights/signal-pulse`
 - add depth pressure list and symbol detail UI backed by `GET /api/market/depth-pressure` and `GET /api/market/depth-pressure/:symbol`
 - add a runtime toggle UI for the 2-minute depth worker using `GET /api/phase12/depth-monitor` and `PATCH /api/phase12/depth-monitor`
+- add a runtime toggle UI for the legacy 2-minute alert worker using `GET /api/phase12/alert-monitor` and `PATCH /api/phase12/alert-monitor`
 - when rendering the depth worker toggle, use `depthMonitor.runtimeEnabled` as the switch value and show disabled or blocked state if `depthMonitor.configuredEnabled` is false
+- when rendering the legacy alert worker toggle, use `alertMonitor.runtimeEnabled` as the switch value and show disabled or blocked state if `alertMonitor.configuredEnabled` is false
 - do not depend on `/api/live` for triggered alerts or notification delivery

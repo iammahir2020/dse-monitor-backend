@@ -23,7 +23,12 @@ const {
     normalizePhoneNumber,
     signAuthToken
 } = require('./services/authService');
-const { startAlertMonitor, stopAlertMonitor } = require('./services/alertMonitor');
+const {
+    getAlertMonitorStatus,
+    setAlertMonitorEnabled,
+    startAlertMonitor,
+    stopAlertMonitor
+} = require('./services/alertMonitor');
 const { getSummaryHistoryForSymbols } = require('./services/dailySummaryService');
 const { getDepthPressureList, getLatestDepthPressure } = require('./services/depthPressureService');
 const { getEntrySignalsForUser } = require('./services/insightService');
@@ -322,13 +327,15 @@ function getOtpResponsePayload(phoneNumber, otpCode) {
 
 async function getOrCreatePhase12Control() {
     const fallbackDepthEnabled = getDepthMonitorStatus().runtimeEnabled;
+    const fallbackAlertEnabled = getAlertMonitorStatus().runtimeEnabled;
 
     return Phase12Control.findOneAndUpdate(
         { singletonKey: PHASE12_CONTROL_SINGLETON_KEY },
         {
             $setOnInsert: {
                 singletonKey: PHASE12_CONTROL_SINGLETON_KEY,
-                depthMonitorEnabled: fallbackDepthEnabled
+                depthMonitorEnabled: fallbackDepthEnabled,
+                alertMonitorEnabled: fallbackAlertEnabled
             }
         },
         { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -339,6 +346,10 @@ function serializePhase12Control(control) {
     const phase12Status = getPhase12Status();
 
     return {
+        alertMonitor: {
+            ...getAlertMonitorStatus(),
+            persistedEnabled: Boolean(control?.alertMonitorEnabled)
+        },
         depthMonitor: {
             ...phase12Status.depthMonitor,
             persistedEnabled: Boolean(control?.depthMonitorEnabled)
@@ -360,13 +371,14 @@ app.use(apiLogger);
 mongoose.connect(process.env.MONGODB_URI)
     .then(async () => {
         console.log('✅ MongoDB Atlas connected');
-        startAlertMonitor();
 
         try {
             const phase12Control = await getOrCreatePhase12Control();
+            startAlertMonitor({ enabled: Boolean(phase12Control.alertMonitorEnabled) });
             startPhase12Monitor({ depthMonitorEnabled: Boolean(phase12Control.depthMonitorEnabled) });
         } catch (error) {
             console.error('❌ Failed to initialize phase12 control:', error.message);
+            startAlertMonitor();
             startPhase12Monitor();
         }
     })
@@ -1370,6 +1382,45 @@ app.patch('/api/phase12/depth-monitor', requireAuth, async (req, res) => {
     } catch (error) {
         console.error(`[${req.requestId}] ❌ Error updating phase12 depth monitor status:`, error.message);
         res.status(500).json({ error: 'Failed to update phase12 depth monitor status' });
+    }
+});
+
+app.get('/api/phase12/alert-monitor', requireAuth, async (req, res) => {
+    try {
+        const control = await getOrCreatePhase12Control();
+        res.json(serializePhase12Control(control));
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error fetching alert monitor status:`, error.message);
+        res.status(500).json({ error: 'Failed to fetch alert monitor status' });
+    }
+});
+
+app.patch('/api/phase12/alert-monitor', requireAuth, async (req, res) => {
+    try {
+        if (typeof req.body.enabled !== 'boolean') {
+            return res.status(400).json({ error: 'enabled boolean is required' });
+        }
+
+        const nextEnabled = req.body.enabled;
+        const alertMonitorStatus = getAlertMonitorStatus();
+        if (nextEnabled && !alertMonitorStatus.configuredEnabled) {
+            return res.status(409).json({ error: 'Alert monitor is disabled by server configuration' });
+        }
+
+        const control = await Phase12Control.findOneAndUpdate(
+            { singletonKey: PHASE12_CONTROL_SINGLETON_KEY },
+            {
+                $set: { alertMonitorEnabled: nextEnabled },
+                $setOnInsert: { singletonKey: PHASE12_CONTROL_SINGLETON_KEY }
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+
+        setAlertMonitorEnabled(Boolean(control.alertMonitorEnabled));
+        res.json(serializePhase12Control(control));
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error updating alert monitor status:`, error.message);
+        res.status(500).json({ error: 'Failed to update alert monitor status' });
     }
 });
 
