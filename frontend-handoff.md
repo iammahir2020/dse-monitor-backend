@@ -15,6 +15,36 @@ The backend now supports all of the following:
 - best-entry insight scoring for portfolio and watchlist stocks
 - legacy market-data widgets and search APIs
 
+## Phase 1 and 2 Rollout Note
+
+- New signal-pulse and depth-pressure capabilities are being implemented behind backend feature flags.
+- Current frontend contract remains valid until the new endpoints are explicitly enabled.
+- This document will be updated incrementally as each new endpoint is released.
+- Internal backend groundwork completed so far includes symbol-universe expansion and historical/depth persistence scaffolding; no frontend changes are required for these internal updates.
+- Gated endpoints now available in backend (if flags are enabled):
+  - `GET /api/insights/signal-pulse`
+  - `GET /api/market/depth-pressure`
+  - `GET /api/market/depth-pressure/:symbol`
+- Operational note: `GET /api/health` now includes phase12 worker status details for monitoring.
+
+Frontend QA quick checks when flags are enabled:
+
+- run backend tests with `npm test`
+- run backend staging dry-run with `npm run phase12:dry-run`
+- trigger one-shot backend cycles if needed using `npm run phase12:run-cycle -- --cycle=all|historical|signal|depth`
+- verify `GET /api/insights/signal-pulse` returns `timeframe: daily`
+- verify `GET /api/market/depth-pressure` returns `threshold` and `data`
+- verify `depth_pressure.updated` websocket events appear for logged-in users when depth updates are emitted
+
+Ops tuning note:
+
+- phase12 logging volume can be tuned using `PHASE12_LOG_SAMPLE_RATE` and `PHASE12_LOG_INCLUDE_PAYLOADS`.
+- the backend now exposes a runtime toggle for the 2-minute depth monitor so the frontend can stop the polling worker when needed.
+
+Backend test coverage note:
+
+- `npm test` now includes phase12 notification-flow assertions for depth and signal event paths.
+
 ## Integration Assumptions
 
 - backend base URL defaults to `http://localhost:5000` in local development
@@ -22,6 +52,10 @@ The backend now supports all of the following:
 - all authenticated REST requests must send the bearer token
 - WebSocket connection should exist only while the user is logged in
 - the frontend should treat the authenticated phone number as the current user identity and must not send a separate `userId`
+
+Backend implementation note:
+
+- market scraper internals are now envelope-based with backward-compatible parsing in the backend; frontend REST and WebSocket contracts remain unchanged.
 
 ## Authentication Flow
 
@@ -85,7 +119,11 @@ Response:
       "watchlistVolumeAlertsEnabled": true,
       "fixedVolumeThreshold": null,
       "relativeVolumeMultiplier": 2,
-      "relativeVolumeLookbackDays": 5
+      "relativeVolumeLookbackDays": 5,
+      "depthPressureAlertsEnabled": true,
+      "depthPressureThreshold": 3,
+      "signalPulseAlertsEnabled": true,
+      "signalPulseTimeframe": "daily"
     }
   },
   "websocket": {
@@ -110,6 +148,57 @@ Expected frontend behavior:
 - call logout API
 - close the WebSocket connection immediately on the client
 - clear local auth state
+
+## Phase12 Worker Control
+
+Use these authenticated endpoints to drive a frontend toggle for the 2-minute depth-pressure worker.
+
+### `GET /api/phase12/depth-monitor`
+
+Returns the current runtime state:
+
+```json
+{
+  "depthMonitor": {
+    "configuredEnabled": true,
+    "runtimeEnabled": true,
+    "effectiveEnabled": true,
+    "intervalActive": true,
+    "persistedEnabled": true
+  },
+  "marketWindow": {
+    "timezone": "Asia/Dhaka",
+    "open": "10:00",
+    "close": "14:30",
+    "isWithinWindowNow": true
+  },
+  "lastDepthCycleAt": "2026-04-01T09:14:00.000Z",
+  "lastDepthStats": {}
+}
+```
+
+### `PATCH /api/phase12/depth-monitor`
+
+Request body:
+
+```json
+{
+  "enabled": false
+}
+```
+
+Behavior:
+
+- `enabled: false` stops the live 2-minute interval immediately
+- `enabled: true` starts the live 2-minute interval again if the backend env flag still allows depth monitoring
+- the toggle is persisted in MongoDB and survives backend restarts
+- if the backend was deployed with `PHASE12_ENABLE_DEPTH_MONITOR=false`, enabling returns `409`
+
+Frontend implementation note:
+
+- load the current state on settings/admin screen mount
+- bind the switch to `depthMonitor.runtimeEnabled`
+- optimistic UI is safe, but reconcile with the response payload because `configuredEnabled` can block re-enable
 
 ## WebSocket Contract
 
@@ -151,6 +240,22 @@ Open a socket after successful login:
     "createdAt": "...",
     "updatedAt": "...",
     "readAt": null
+  }
+}
+```
+
+#### `depth_pressure.updated` (feature-flagged)
+
+```json
+{
+  "event": "depth_pressure.updated",
+  "data": {
+    "symbol": "BRACBANK",
+    "buyPressureRatio": 3.42,
+    "totalBids": 125000,
+    "totalAsks": 36500,
+    "signal": "bullishPressure",
+    "snapshotAt": "..."
   }
 }
 ```
@@ -224,6 +329,23 @@ Returns:
 - `marketSentiment`
 - `cacheInfo`
 
+### `GET /api/market/depth-pressure` (feature-flagged)
+
+Notes:
+
+- requires auth
+- available only when backend enables `PHASE12_ENABLE_DEPTH_API=true`
+- optional query params:
+  - `symbols` comma-separated list
+  - `limit` default 30, max 100
+
+### `GET /api/market/depth-pressure/:symbol` (feature-flagged)
+
+Notes:
+
+- requires auth
+- returns latest depth pressure snapshot for one symbol
+
 ## Notification Center APIs
 
 ### List notifications
@@ -269,6 +391,8 @@ Response:
 - `high_volume_trade`
 - `relative_volume_trade`
 - `entry_signal`
+- `order_book_pressure`
+- `signal_pulse`
 - `system`
 
 ### Suggested frontend handling by type
@@ -277,6 +401,8 @@ Response:
 - `high_volume_trade`: emphasize current volume versus fixed threshold
 - `relative_volume_trade`: emphasize current multiple versus historical average
 - `entry_signal`: present reasons, cautions, and suggested entry zone
+- `order_book_pressure`: show buy/sell pressure direction, ratio, and bid/ask totals
+- `signal_pulse`: show signal kind (oversold recovery, golden cross, trend cooling) with RSI/EMA context
 - `system`: show generic platform-level updates
 
 ## User Settings API
@@ -295,7 +421,11 @@ Supported body fields:
   "watchlistVolumeAlertsEnabled": true,
   "fixedVolumeThreshold": 500000,
   "relativeVolumeMultiplier": 2.2,
-  "relativeVolumeLookbackDays": 5
+  "relativeVolumeLookbackDays": 5,
+  "depthPressureAlertsEnabled": true,
+  "depthPressureThreshold": 3,
+  "signalPulseAlertsEnabled": true,
+  "signalPulseTimeframe": "daily"
 }
 ```
 
@@ -441,6 +571,17 @@ Response shape:
 
 `GET /api/insights/volume-context/:symbol`
 
+### Signal pulse (feature-flagged)
+
+`GET /api/insights/signal-pulse`
+
+Notes:
+
+- available only when backend enables `PHASE12_ENABLE_SIGNAL_API=true`
+- optional query params:
+  - `symbols` comma-separated list
+  - `limit` default 50, max 200
+
 ## Frontend Screens To Build
 
 ### 1. Auth
@@ -495,8 +636,10 @@ Response shape:
 
 - enable or disable Telegram notifications
 - enable or disable portfolio or watchlist volume alerts
+- enable or disable the phase12 2-minute depth monitor using `GET /api/phase12/depth-monitor` and `PATCH /api/phase12/depth-monitor`
 - set fixed volume threshold
 - set relative volume multiplier and lookback days
+- show current depth worker status using `depthMonitor.runtimeEnabled`, `depthMonitor.intervalActive`, and `depthMonitor.configuredEnabled`
 
 ## Suggested Frontend State Shape
 
@@ -513,6 +656,7 @@ Recommended client-side state domains:
 - insights
 - telegram link status
 - user settings
+- phase12 worker control
 
 This separation keeps the real-time notification path from leaking into unrelated screens.
 
@@ -538,3 +682,16 @@ The frontend team does not implement this directly, but the user flow depends on
 ## Handoff Summary
 
 Frontend should treat this backend as an authenticated, user-scoped API. The biggest behavioral shift is that notifications are now real-time and session-bound: login should establish the socket, logout should close it, and all portfolio, watchlist, alert, and notification operations should be driven from the authenticated phone-number user context rather than sending a separate `userId`.
+
+## Frontend Implementation Checklist
+
+- use `GET /api/auth/me` on app boot to restore session and user settings
+- open the websocket only after auth is restored and close it immediately on logout
+- consume `notification.created` for real-time notification UI updates
+- if enabled in backend, consume `depth_pressure.updated` for live depth-pressure refreshes
+- add settings UI for `depthPressureAlertsEnabled`, `depthPressureThreshold`, `signalPulseAlertsEnabled`, and `signalPulseTimeframe`
+- add signal pulse UI backed by `GET /api/insights/signal-pulse`
+- add depth pressure list and symbol detail UI backed by `GET /api/market/depth-pressure` and `GET /api/market/depth-pressure/:symbol`
+- add a runtime toggle UI for the 2-minute depth worker using `GET /api/phase12/depth-monitor` and `PATCH /api/phase12/depth-monitor`
+- when rendering the depth worker toggle, use `depthMonitor.runtimeEnabled` as the switch value and show disabled or blocked state if `depthMonitor.configuredEnabled` is false
+- do not depend on `/api/live` for triggered alerts or notification delivery

@@ -45,6 +45,25 @@ const userSchema = new mongoose.Schema(
                 type: Number,
                 default: 5,
                 min: 2
+            },
+            depthPressureAlertsEnabled: {
+                type: Boolean,
+                default: true
+            },
+            depthPressureThreshold: {
+                type: Number,
+                default: 3,
+                min: 1.2,
+                max: 10
+            },
+            signalPulseAlertsEnabled: {
+                type: Boolean,
+                default: true
+            },
+            signalPulseTimeframe: {
+                type: String,
+                default: 'daily',
+                enum: ['daily']
             }
         },
         lastLoginAt: Date

@@ -84,6 +84,32 @@ nvm use
 npm install
 ```
 
+## Render Deployment (Repo-Level)
+
+This repository now includes two deploy helpers:
+
+- `.env.example` for local and Render variable reference
+- `render.yaml` Blueprint for creating the web service with sane defaults
+
+### Recommended deploy flow
+
+1. Push repository changes including `render.yaml`.
+2. In Render, create a Blueprint service from this repository.
+3. Fill all `sync: false` variables in Render dashboard (for example `MONGODB_URI`, `FRONTEND_URL`, Telegram values).
+4. Deploy and verify health endpoint:
+
+```bash
+GET /api/health
+```
+
+5. Run staged checks locally against deployed URL:
+
+```bash
+npm run phase12:dry-run
+```
+
+6. Keep Phase12 APIs off initially (`PHASE12_ENABLE_SIGNAL_API=false`, `PHASE12_ENABLE_DEPTH_API=false`) and enable gradually after observing cycle stability.
+
 ## Ways To Run
 
 ### 1. Development mode
@@ -263,6 +289,12 @@ curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
 
 - `GET /api/insights/entry-signals`
 - `GET /api/insights/volume-context/:symbol`
+- `GET /api/insights/signal-pulse` (feature-flagged)
+
+### Market Depth
+
+- `GET /api/market/depth-pressure` (feature-flagged)
+- `GET /api/market/depth-pressure/:symbol` (feature-flagged)
 
 ## Operational Notes
 
@@ -270,6 +302,51 @@ curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
 - It fetches fresh live data every 2 minutes.
 - Daily summary storage is intentionally compact to avoid MongoDB bloat.
 - OTP is still development-grade until a real SMS provider is integrated.
+
+## Phase12 Operations
+
+### Useful commands
+
+```bash
+# run backend logic tests
+npm test
+
+# lightweight staging API checks
+npm run phase12:dry-run
+
+# run phase12 cycles on demand
+npm run phase12:run-cycle
+npm run phase12:run-cycle -- --cycle=historical
+npm run phase12:run-cycle -- --cycle=signal
+npm run phase12:run-cycle -- --cycle=depth
+```
+
+### Feature flags
+
+```env
+PHASE12_ENABLE_SIGNAL_API=true
+PHASE12_ENABLE_DEPTH_API=true
+PHASE12_ENABLE_DEPTH_WS_EVENTS=true
+PHASE12_ENABLE_HIST_SYNC=true
+PHASE12_ENABLE_SIGNAL_MONITOR=true
+PHASE12_ENABLE_DEPTH_MONITOR=true
+```
+
+### Phase12 logging controls
+
+```env
+PHASE12_LOG_ERROR_LIMIT=5
+PHASE12_LOG_SAMPLE_RATE=1
+PHASE12_LOG_INCLUDE_PAYLOADS=false
+```
+
+### Market window defaults
+
+```env
+BD_MARKET_TIMEZONE=Asia/Dhaka
+BD_MARKET_OPEN=10:00
+BD_MARKET_CLOSE=14:30
+```
 
 ## Frontend Integration
 

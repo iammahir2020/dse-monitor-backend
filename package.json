@@ -9,7 +9,9 @@
     "check:node": "node -e \"const major = Number(process.versions.node.split('.')[0]); if (major < 20) { console.error('Node >=20 is required'); process.exit(1); }\"",
     "prebuild": "npm run check:node",
     "build": "find . -name '*.js' -not -path './node_modules/*' -not -path './logs/*' -print0 | xargs -0 -n1 node --check",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tests/run-tests.js",
+    "phase12:dry-run": "node scripts/phase12-dry-run.js",
+    "phase12:run-cycle": "node scripts/phase12-run-cycle.js"
   },
   "keywords": [],
   "author": "",
@@ -19,7 +21,7 @@
     "node": ">=20 <21"
   },
   "dependencies": {
-    "axios": "^1.13.6",
+    "axios": "1.13.6",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",

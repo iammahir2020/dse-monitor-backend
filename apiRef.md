@@ -6,9 +6,70 @@ This document describes the currently implemented backend contract.
 
 - Live stock data is not persisted to MongoDB.
 - Live market data is fetched through the Python scraper and stored in a shared in-memory cache.
+- Scraper-to-backend integration now supports a versioned envelope internally (`ok`, `data`, metadata) with backward compatibility for legacy array payloads.
 - Compact daily summaries are stored in MongoDB for lightweight historical analysis.
 - User-owned data is scoped by authenticated phone-number identity.
 - Most user workflows now require a JWT bearer token.
+
+## Phase 1 and 2 Rollout Status
+
+- Phase 1 and 2 backend implementation is in progress behind feature flags.
+- Existing public API contracts remain stable during this rollout.
+- Internal workers now prepare for broader symbol-universe processing using watchlist, portfolio, and optional env-configured global symbols.
+- Implemented internal components so far:
+  - scraper envelope hardening with backward-compatible backend parsing
+  - symbol-universe builder service
+  - historical daily bar model and ingestion service scaffolding
+  - depth snapshot model scaffolding
+  - signal pulse service and gated API endpoint
+  - depth pressure service and gated API endpoints
+
+### Quick Verification Commands
+
+- Run logic tests:
+
+```bash
+npm test
+```
+
+- Run phase12 staging dry-run checks:
+
+```bash
+npm run phase12:dry-run
+```
+
+- Run one-shot phase12 worker cycle manually:
+
+```bash
+npm run phase12:run-cycle
+npm run phase12:run-cycle -- --cycle=historical
+npm run phase12:run-cycle -- --cycle=signal
+npm run phase12:run-cycle -- --cycle=depth
+```
+
+- Enable feature-gated APIs in staging:
+
+```env
+PHASE12_ENABLE_SIGNAL_API=true
+PHASE12_ENABLE_DEPTH_API=true
+PHASE12_ENABLE_DEPTH_WS_EVENTS=true
+PHASE12_LOG_ERROR_LIMIT=5
+PHASE12_LOG_SAMPLE_RATE=1
+PHASE12_LOG_INCLUDE_PAYLOADS=false
+```
+
+- Validate runtime status:
+  - call `GET /api/health` and inspect `phase12` cycle stats
+  - call `GET /api/insights/signal-pulse`
+  - call `GET /api/market/depth-pressure`
+
+Test coverage note:
+
+- Current `npm test` includes phase12 notification-flow checks for:
+  - depth pressure notification creation path
+  - signal pulse notification creation path
+  - signal transition helper behavior
+  - runtime toggle behavior for the 2-minute depth monitor
 
 ## Authentication
 
@@ -73,7 +134,11 @@ Verify the OTP and start a session.
       "watchlistVolumeAlertsEnabled": true,
       "fixedVolumeThreshold": null,
       "relativeVolumeMultiplier": 2,
-      "relativeVolumeLookbackDays": 5
+      "relativeVolumeLookbackDays": 5,
+      "depthPressureAlertsEnabled": true,
+      "depthPressureThreshold": 3,
+      "signalPulseAlertsEnabled": true,
+      "signalPulseTimeframe": "daily"
     }
   },
   "websocket": {
@@ -137,7 +202,11 @@ Update user notification settings.
   "watchlistVolumeAlertsEnabled": true,
   "fixedVolumeThreshold": 500000,
   "relativeVolumeMultiplier": 2.2,
-  "relativeVolumeLookbackDays": 5
+  "relativeVolumeLookbackDays": 5,
+  "depthPressureAlertsEnabled": true,
+  "depthPressureThreshold": 3,
+  "signalPulseAlertsEnabled": true,
+  "signalPulseTimeframe": "daily"
 }
 ```
 
@@ -146,6 +215,54 @@ Update user notification settings.
 ```json
 {
   "user": {
+
+## Phase12 Runtime Control
+
+### `GET /api/phase12/depth-monitor`
+
+Read the current server-side state of the 2-minute depth worker.
+
+- Auth: bearer token required
+- Response:
+
+```json
+{
+  "depthMonitor": {
+    "configuredEnabled": true,
+    "runtimeEnabled": true,
+    "effectiveEnabled": true,
+    "intervalActive": true,
+    "persistedEnabled": true
+  },
+  "marketWindow": {
+    "timezone": "Asia/Dhaka",
+    "open": "10:00",
+    "close": "14:30",
+    "isWithinWindowNow": true
+  },
+  "lastDepthCycleAt": "2026-04-01T09:14:00.000Z",
+  "lastDepthStats": {}
+}
+```
+
+### `PATCH /api/phase12/depth-monitor`
+
+Enable or disable the 2-minute depth worker.
+
+- Auth: bearer token required
+- Body:
+
+```json
+{
+  "enabled": false
+}
+```
+
+- Response: same shape as `GET /api/phase12/depth-monitor`
+- Notes:
+  - disabling stops the in-process interval immediately
+  - the value is persisted and reused on next boot
+  - enabling returns `409` if `PHASE12_ENABLE_DEPTH_MONITOR=false` in server env
     "id": "...",
     "phoneNumber": "+8801XXXXXXXXX",
     "notificationSettings": {}
@@ -257,6 +374,43 @@ Return market breadth and simple sentiment.
 }
 ```
 
+### `GET /api/market/depth-pressure`
+
+Return latest depth pressure snapshots.
+
+- Auth: bearer token required
+- Availability: gated by `PHASE12_ENABLE_DEPTH_API=true`
+- Query params:
+  - `symbols` optional comma-separated symbol list
+  - `limit` default `30`, max `100`
+- Response:
+
+```json
+{
+  "generatedAt": "2026-04-01T12:00:00.000Z",
+  "threshold": 3,
+  "data": [
+    {
+      "symbol": "BRACBANK",
+      "buyPressureRatio": 3.42,
+      "totalBids": 125000,
+      "totalAsks": 36500,
+      "signal": "bullishPressure",
+      "snapshotAt": "2026-04-01T11:58:00.000Z"
+    }
+  ]
+}
+```
+
+### `GET /api/market/depth-pressure/:symbol`
+
+Return latest depth pressure detail for one symbol.
+
+- Auth: bearer token required
+- Availability: gated by `PHASE12_ENABLE_DEPTH_API=true`
+- Errors:
+  - `404` if no snapshot exists for the symbol
+
 ### `GET /api/history/:symbol`
 
 Removed.
@@ -367,6 +521,16 @@ Delete all notifications for the current user.
   "deletedCount": 5
 }
 ```
+
+### Notification types currently used
+
+- `alert_triggered`
+- `high_volume_trade`
+- `relative_volume_trade`
+- `entry_signal`
+- `order_book_pressure`
+- `signal_pulse`
+- `system`
 
 ## Alerts
 
@@ -622,6 +786,51 @@ Return live-versus-recent volume context for one symbol.
 }
 ```
 
+### `GET /api/insights/signal-pulse`
+
+Return signal pulse values (RSI and EMA based daily state).
+
+- Auth: bearer token required
+- Availability: gated by `PHASE12_ENABLE_SIGNAL_API=true`
+- Query params:
+  - `symbols` optional comma-separated symbol list
+  - `limit` optional default `50`, max `200`
+- Response:
+
+```json
+{
+  "generatedAt": "2026-04-01T12:00:00.000Z",
+  "timeframe": "daily",
+  "data": [
+    {
+      "symbol": "BRACBANK",
+      "rsi14": 52.13,
+      "ema9": 50.82,
+      "ema21": 49.77,
+      "signals": {
+        "oversoldRecovery": false,
+        "goldenCross": true,
+        "trendCooling": false,
+        "stateLabel": "momentum_rising"
+      },
+      "updatedAt": "2026-04-01T11:59:00.000Z"
+    }
+  ]
+}
+```
+
+## Health
+
+### `GET /api/health`
+
+Return service health and phase12 worker status.
+
+- Auth: public
+- Response includes:
+  - `status`
+  - `timestamp`
+  - `phase12` worker runtime status
+
 ## WebSocket
 
 ### `GET /ws?token=<jwt>`
@@ -632,6 +841,7 @@ WebSocket endpoint for real-time notifications during an active logged-in sessio
 - Server events:
   - `connection.ready`
   - `notification.created`
+  - `depth_pressure.updated` (feature-flagged via `PHASE12_ENABLE_DEPTH_WS_EVENTS=true`)
 
 Example `connection.ready`:
 

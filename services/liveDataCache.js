@@ -9,6 +9,39 @@ let cache = {
     lastFetched: null,
 };
 
+function parseScraperPayload(rawPayload) {
+    // Legacy mode: scraper returns a plain array of stock rows.
+    if (Array.isArray(rawPayload)) {
+        return rawPayload;
+    }
+
+    if (!rawPayload || typeof rawPayload !== 'object') {
+        throw new Error('Scraper returned non-object payload');
+    }
+
+    // Legacy mode: scraper returns { error: "..." }.
+    if (rawPayload.error) {
+        throw new Error(`Scraper error: ${rawPayload.error}`);
+    }
+
+    // V2 envelope mode.
+    if (typeof rawPayload.ok === 'boolean') {
+        if (!rawPayload.ok) {
+            const errorType = rawPayload.errorType || 'ScraperError';
+            const errorMessage = rawPayload.errorMessage || 'Unknown scraper error';
+            throw new Error(`${errorType}: ${errorMessage}`);
+        }
+
+        if (!Array.isArray(rawPayload.data)) {
+            throw new Error('Scraper success payload missing data array');
+        }
+
+        return rawPayload.data;
+    }
+
+    throw new Error('Scraper returned unexpected payload shape');
+}
+
 function fetchFromScraper() {
     return new Promise((resolve, reject) => {
         const scriptPath = path.join(__dirname, '../scraper/get_data.py');
@@ -55,19 +88,13 @@ function fetchFromScraper() {
 
                 try {
                     const jsonData = JSON.parse(fullOutput);
-                    if (jsonData && !Array.isArray(jsonData) && jsonData.error) {
-                        reject(new Error(`Scraper error: ${jsonData.error}`));
-                        return;
-                    }
-
-                    if (!Array.isArray(jsonData)) {
-                        reject(new Error('Scraper returned unexpected payload shape'));
-                        return;
-                    }
-
-                    resolve(jsonData);
+                    const parsedData = parseScraperPayload(jsonData);
+                    resolve(parsedData);
                 } catch (e) {
-                    reject(new Error(`JSON parse error: ${e.message}`));
+                    const message = /Unexpected token|Unexpected end of JSON|JSON/.test(e.message)
+                        ? `JSON parse error: ${e.message}`
+                        : e.message;
+                    reject(new Error(message));
                 }
             });
         }

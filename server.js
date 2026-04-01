@@ -11,6 +11,7 @@ const { requireAuth } = require('./middleware/auth');
 const Alert = require('./models/Alert');
 const Notification = require('./models/Notification');
 const OtpChallenge = require('./models/OtpChallenge');
+const Phase12Control = require('./models/Phase12Control');
 const Portfolio = require('./models/Portfolio');
 const User = require('./models/User');
 const Watchlist = require('./models/Watchlist');
@@ -24,7 +25,16 @@ const {
 } = require('./services/authService');
 const { startAlertMonitor, stopAlertMonitor } = require('./services/alertMonitor');
 const { getSummaryHistoryForSymbols } = require('./services/dailySummaryService');
+const { getDepthPressureList, getLatestDepthPressure } = require('./services/depthPressureService');
 const { getEntrySignalsForUser } = require('./services/insightService');
+const { getSignalPulse } = require('./services/signalPulseService');
+const {
+    getDepthMonitorStatus,
+    getPhase12Status,
+    setDepthMonitorEnabled,
+    startPhase12Monitor,
+    stopPhase12Monitor
+} = require('./services/phase12Monitor');
 const { computeChangePercent, getStockVolume } = require('./services/marketAnalytics');
 const { getLiveData, getCacheInfo } = require('./services/liveDataCache');
 const {
@@ -49,6 +59,9 @@ const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES || 5);
 const TELEGRAM_LINK_EXPIRY_MINUTES = Number(process.env.TELEGRAM_LINK_EXPIRY_MINUTES || 15);
 const EXPOSE_OTP_IN_RESPONSE = String(process.env.EXPOSE_OTP_IN_RESPONSE || '').toLowerCase() === 'true';
 const BACKEND_PUBLIC_URL = String(process.env.BACKEND_PUBLIC_URL || '').trim().replace(/\/+$/, '');
+const PHASE12_ENABLE_SIGNAL_API = String(process.env.PHASE12_ENABLE_SIGNAL_API || '').toLowerCase() === 'true';
+const PHASE12_ENABLE_DEPTH_API = String(process.env.PHASE12_ENABLE_DEPTH_API || '').toLowerCase() === 'true';
+const PHASE12_CONTROL_SINGLETON_KEY = 'primary';
 
 function normalizeOrigin(origin) {
     if (!origin) {
@@ -231,7 +244,9 @@ function sanitizeNotificationSettings(body) {
         'websocketEnabled',
         'telegramEnabled',
         'portfolioVolumeAlertsEnabled',
-        'watchlistVolumeAlertsEnabled'
+        'watchlistVolumeAlertsEnabled',
+        'depthPressureAlertsEnabled',
+        'signalPulseAlertsEnabled'
     ];
 
     allowedBooleanKeys.forEach((key) => {
@@ -254,6 +269,18 @@ function sanitizeNotificationSettings(body) {
         nextSettings.relativeVolumeLookbackDays = Number(body.relativeVolumeLookbackDays);
     }
 
+    const depthPressureThreshold = Number(body.depthPressureThreshold);
+    if (Number.isFinite(depthPressureThreshold) && depthPressureThreshold >= 1.2 && depthPressureThreshold <= 10) {
+        nextSettings.depthPressureThreshold = depthPressureThreshold;
+    }
+
+    if (typeof body.signalPulseTimeframe === 'string') {
+        const normalizedTimeframe = body.signalPulseTimeframe.trim().toLowerCase();
+        if (['daily'].includes(normalizedTimeframe)) {
+            nextSettings.signalPulseTimeframe = normalizedTimeframe;
+        }
+    }
+
     return nextSettings;
 }
 
@@ -271,6 +298,35 @@ function getOtpResponsePayload(phoneNumber, otpCode) {
     return payload;
 }
 
+async function getOrCreatePhase12Control() {
+    const fallbackDepthEnabled = getDepthMonitorStatus().runtimeEnabled;
+
+    return Phase12Control.findOneAndUpdate(
+        { singletonKey: PHASE12_CONTROL_SINGLETON_KEY },
+        {
+            $setOnInsert: {
+                singletonKey: PHASE12_CONTROL_SINGLETON_KEY,
+                depthMonitorEnabled: fallbackDepthEnabled
+            }
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+}
+
+function serializePhase12Control(control) {
+    const phase12Status = getPhase12Status();
+
+    return {
+        depthMonitor: {
+            ...phase12Status.depthMonitor,
+            persistedEnabled: Boolean(control?.depthMonitorEnabled)
+        },
+        marketWindow: phase12Status.marketWindow,
+        lastDepthCycleAt: phase12Status.lastDepthCycleAt,
+        lastDepthStats: phase12Status.lastDepthStats
+    };
+}
+
 app.use(helmet());
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '100kb' }));
@@ -279,9 +335,17 @@ app.use('/api/auth', authLimiter);
 app.use(apiLogger);
 
 mongoose.connect(process.env.MONGODB_URI)
-    .then(() => {
+    .then(async () => {
         console.log('✅ MongoDB Atlas connected');
         startAlertMonitor();
+
+        try {
+            const phase12Control = await getOrCreatePhase12Control();
+            startPhase12Monitor({ depthMonitorEnabled: Boolean(phase12Control.depthMonitorEnabled) });
+        } catch (error) {
+            console.error('❌ Failed to initialize phase12 control:', error.message);
+            startPhase12Monitor();
+        }
     })
     .catch((error) => console.error('❌ MongoDB connection error:', error.message));
 
@@ -1179,13 +1243,125 @@ app.get('/api/insights/volume-context/:symbol', requireAuth, async (req, res) =>
     }
 });
 
+app.get('/api/insights/signal-pulse', requireAuth, async (req, res) => {
+    if (!PHASE12_ENABLE_SIGNAL_API) {
+        return res.status(404).json({ error: 'Not found' });
+    }
+
+    try {
+        const symbols = String(req.query.symbols || '')
+            .split(',')
+            .map((value) => value.trim().toUpperCase())
+            .filter(Boolean);
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+
+        const data = await getSignalPulse({ symbols, limit });
+        res.json({
+            generatedAt: new Date().toISOString(),
+            timeframe: 'daily',
+            data
+        });
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error fetching signal pulse:`, error.message);
+        res.status(500).json({ error: 'Failed to fetch signal pulse' });
+    }
+});
+
+app.get('/api/market/depth-pressure', requireAuth, async (req, res) => {
+    if (!PHASE12_ENABLE_DEPTH_API) {
+        return res.status(404).json({ error: 'Not found' });
+    }
+
+    try {
+        const symbols = String(req.query.symbols || '')
+            .split(',')
+            .map((value) => value.trim().toUpperCase())
+            .filter(Boolean);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+        const threshold = Number(process.env.DEPTH_PRESSURE_THRESHOLD || 3);
+        const data = await getDepthPressureList({ symbols, limit });
+
+        res.json({
+            generatedAt: new Date().toISOString(),
+            threshold,
+            data
+        });
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error fetching depth pressure list:`, error.message);
+        res.status(500).json({ error: 'Failed to fetch depth pressure list' });
+    }
+});
+
+app.get('/api/market/depth-pressure/:symbol', requireAuth, async (req, res) => {
+    if (!PHASE12_ENABLE_DEPTH_API) {
+        return res.status(404).json({ error: 'Not found' });
+    }
+
+    try {
+        const symbol = req.params.symbol.toUpperCase();
+        const snapshot = await getLatestDepthPressure(symbol);
+        if (!snapshot) {
+            return res.status(404).json({ error: 'Depth pressure snapshot not found' });
+        }
+
+        return res.json(snapshot);
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error fetching depth pressure detail:`, error.message);
+        res.status(500).json({ error: 'Failed to fetch depth pressure detail' });
+    }
+});
+
+app.get('/api/phase12/depth-monitor', requireAuth, async (req, res) => {
+    try {
+        const control = await getOrCreatePhase12Control();
+        res.json(serializePhase12Control(control));
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error fetching phase12 depth monitor status:`, error.message);
+        res.status(500).json({ error: 'Failed to fetch phase12 depth monitor status' });
+    }
+});
+
+app.patch('/api/phase12/depth-monitor', requireAuth, async (req, res) => {
+    try {
+        if (typeof req.body.enabled !== 'boolean') {
+            return res.status(400).json({ error: 'enabled boolean is required' });
+        }
+
+        const nextEnabled = req.body.enabled;
+        const depthMonitorStatus = getDepthMonitorStatus();
+        if (nextEnabled && !depthMonitorStatus.configuredEnabled) {
+            return res.status(409).json({ error: 'Depth monitor is disabled by server configuration' });
+        }
+
+        const control = await Phase12Control.findOneAndUpdate(
+            { singletonKey: PHASE12_CONTROL_SINGLETON_KEY },
+            {
+                $set: { depthMonitorEnabled: nextEnabled },
+                $setOnInsert: { singletonKey: PHASE12_CONTROL_SINGLETON_KEY }
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+
+        setDepthMonitorEnabled(Boolean(control.depthMonitorEnabled));
+        res.json(serializePhase12Control(control));
+    } catch (error) {
+        console.error(`[${req.requestId}] ❌ Error updating phase12 depth monitor status:`, error.message);
+        res.status(500).json({ error: 'Failed to update phase12 depth monitor status' });
+    }
+});
+
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        phase12: getPhase12Status()
+    });
 });
 
 process.on('SIGINT', () => {
     console.log('🛑 Shutting down gracefully...');
     stopAlertMonitor();
+    stopPhase12Monitor();
     server.close(() => process.exit(0));
 });
 

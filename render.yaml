@@ -1,0 +1,72 @@
+services:
+  - type: web
+    name: dse-monitor-backend
+    runtime: node
+    plan: starter
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.20.2
+      - key: PORT
+        value: 5000
+      - key: MONGODB_URI
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: FRONTEND_WEB_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: OTP_EXPIRY_MINUTES
+        value: 5
+      - key: SMS_PROVIDER
+        value: console
+      - key: EXPOSE_OTP_IN_RESPONSE
+        value: "false"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_LINK_EXPIRY_MINUTES
+        value: 15
+      - key: BACKEND_PUBLIC_URL
+        sync: false
+      - key: PYTHON_BIN
+        value: python3
+      - key: PHASE12_ENABLE_HIST_SYNC
+        value: "true"
+      - key: PHASE12_ENABLE_SIGNAL_MONITOR
+        value: "true"
+      - key: PHASE12_ENABLE_DEPTH_MONITOR
+        value: "true"
+      - key: PHASE12_ENABLE_SIGNAL_API
+        value: "false"
+      - key: PHASE12_ENABLE_DEPTH_API
+        value: "false"
+      - key: PHASE12_ENABLE_DEPTH_WS_EVENTS
+        value: "false"
+      - key: PHASE12_GLOBAL_SYMBOLS
+        sync: false
+      - key: DEPTH_PRESSURE_THRESHOLD
+        value: 3
+      - key: DEPTH_SNAPSHOT_RETENTION_DAYS
+        value: 7
+      - key: BD_MARKET_TIMEZONE
+        value: Asia/Dhaka
+      - key: BD_MARKET_OPEN
+        value: 10:00
+      - key: BD_MARKET_CLOSE
+        value: 14:30
+      - key: PHASE12_LOG_ERROR_LIMIT
+        value: 5
+      - key: PHASE12_LOG_SAMPLE_RATE
+        value: 1
+      - key: PHASE12_LOG_INCLUDE_PAYLOADS
+        value: "false"

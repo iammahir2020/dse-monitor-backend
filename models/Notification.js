@@ -15,13 +15,15 @@ const notificationSchema = new mongoose.Schema(
                 'high_volume_trade',
                 'relative_volume_trade',
                 'entry_signal',
+                'order_book_pressure',
+                'signal_pulse',
                 'system'
             ]
         },
         source: {
             type: String,
             required: true,
-            enum: ['manual_alert', 'smart_volume', 'entry_signal', 'auth', 'system']
+            enum: ['manual_alert', 'smart_volume', 'entry_signal', 'depth_pressure', 'signal_pulse', 'auth', 'system']
         },
         symbol: {
             type: String,

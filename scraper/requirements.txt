@@ -1,2 +1,2 @@
-numpy
-bdshare
+numpy==2.2.4
+bdshare==1.2.1
